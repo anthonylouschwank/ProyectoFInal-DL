@@ -1,0 +1,11 @@
+# Con GPU NVIDIA, instalar primero torch y torchvision desde https://pytorch.org (versión CUDA)
+torch>=2.4
+torchvision>=0.19
+timm>=1.0
+numpy>=1.26
+pillow>=10.0
+pandas>=2.0
+scikit-learn>=1.4
+matplotlib>=3.8
+streamlit>=1.45
+pytest>=8.0
