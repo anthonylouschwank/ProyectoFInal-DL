@@ -1,0 +1,9 @@
+escenario,umbral_optimo,valor_optimo_Q_1000,valor_con_umbral_base_Q_1000,auditar_todo_Q_1000
+base,0.98,9264.4,9264.4,-19107.1
+prevalencia 1%,0.98,3088.1,3088.1,-26369.0
+prevalencia 5%,0.98,15440.6,15440.6,-11845.2
+prevalencia 10%,0.98,30881.2,30881.2,6309.5
+costo revisión -50%,0.98,9398.4,9398.4,-14107.1
+costo revisión +50%,0.98,9130.4,9130.4,-24107.1
+fricción -50%,0.98,9264.4,9264.4,-9407.1
+fricción +50%,0.98,9264.4,9264.4,-28807.1

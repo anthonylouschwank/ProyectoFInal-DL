@@ -1,0 +1,120 @@
+# Resultados
+
+Todas las métricas son sobre el **conjunto de prueba sintético**: 300 facturas auténticas y sus 300 gemelas alteradas, que el modelo no vio al entrenar ni al elegir hiperparámetros. Las figuras y tablas están en [`docs/`](docs/). La evaluación con fotos reales está pendiente (sección final).
+
+![Ejemplo de detección](docs/ejemplo_deteccion.jpg)
+*Modelo final sobre tres fotos de prueba. A la izquierda, el total cambiado de 482.50 a 682.50 (dificultad media). Al centro, el IVA cambiado de 17.83 a 87.83 con la misma fuente (dificultad difícil): el recuadro rojo marca la zona sospechosa, con su acercamiento. A la derecha, una foto auténtica: probabilidad 4.5 %, sin marca.*
+
+## Datos
+
+| | Pares (auténtica + alterada) | Alteraciones fáciles / medias / difíciles |
+|---|---|---|
+| Entrenamiento | 3,000 | 1,502 / 920 / 578 |
+| Validación | 300 | (misma proporción) |
+| Prueba | 300 | (misma proporción) |
+
+- **Campos alterados:** total (55 %), NIT del receptor (15 %), fecha (12 %), IVA, NIT del emisor y montos de productos.
+- **Técnicas:** reescribir el valor (94 %) o copiar un dígito de la misma factura (6 %).
+- **Monto en riesgo:** lo que gana quien altera. Es la diferencia inflada en total o IVA, o el total completo si cambia la fecha (reutilizar una factura vieja) o el NIT (cobrar una compra personal).
+- **Las gemelas comparten geometría:** recorte, brillo y escala son los mismos, y solo la compresión JPEG es independiente. Fuera de la zona editada difieren solo por ruido de compresión (2–5 niveles de gris en promedio).
+
+## Iteraciones
+
+| Iteración | Cambio | AUC | Recall con 1 % de falsas alarmas | Recall fácil / medio / difícil* | Localización** | Ahorro (Q / 1,000 facturas) | Entrenamiento |
+|---|---|---|---|---|---|---|---|
+| it1 | EfficientNet-B0, foto reducida a 768×576, promedio global + capa lineal | 0.950 | 82 % | 95 / 92 / 59 % | — (Grad-CAM 25 %) | 8,213 | 40 min |
+| it2 | + mapa de sospecha a 1/16, top-8 y supervisión con máscaras | 0.954 | 87 % | 95 / 95 / 56 % | 71 % | 8,654 | 39 min |
+| **it3 (final)** | + **recortes de 512 a resolución completa** de las gemelas | **0.961** | **90 %** | **99 / 97 / 66 %** | **80 %** | **9,264** | 27 min |
+| it3b (ablación) | it3 sin supervisión con máscaras | 0.964 | 90 % | 97 / 95 / 61 % | 0 % (Grad-CAM 5 %) | 9,315 | 22 min |
+
+\* Con umbral 0.5. \*\* Porcentaje de fotos alteradas en las que el punto más sospechoso del mapa cae dentro de la zona editada.
+
+Todos los entrenamientos se hicieron en una RTX 3070 Laptop (8 GB): 10 épocas, AdamW con lr máx. 3e-4 y OneCycle, bf16, y menos de 4 GB de VRAM. La tabla completa está en `docs/comparacion_iteraciones.csv` y las curvas en `docs/curvas_*.png`.
+
+**Incertidumbre:** con 300 alteradas en prueba, un recall cercano al 90 % tiene un intervalo de confianza del 95 % de unos ±3.4 puntos. Las diferencias de AUC entre it1, it2 e it3 son consistentes en todas las métricas, pero entre it3 e it3b están dentro del ruido.
+
+### Qué aportó cada cambio
+
+- **Resolución completa (it2 → it3)** es el cambio que más mueve el valor (+Q610 por cada 1,000 facturas) y el recall en las alteraciones difíciles (56 → 66 %). Las huellas de una edición (el borde del parche, el ruido distinto, la fuente que no calza) miden unos pocos píxeles; al reducir la foto a la mitad se pierden. Además, entrenar con recortes es *más rápido* (27 contra 39 minutos).
+- **Mapa de sospecha + máscaras (it1 → it2)** mejora poco la detección (+0.004 AUC), pero reduce las falsas alarmas a la mitad con umbral 0.5 (3.7 % → 1.7 %) y hace que el modelo señale dónde está la alteración: el mapa acierta la zona en 71 % de los casos, mientras que Grad-CAM sobre el clasificador estándar solo en 25 %.
+- **Ablación sin máscaras (it3b):** detecta igual de bien, pero el mapa **deja de señalar la zona editada** (0 % contra 80 %), y Grad-CAM tampoco (5 %). El modelo detecta sin poder mostrar dónde, y eso le quita al auditor la explicación. La supervisión con máscaras no se justifica por la métrica, sino por la explicabilidad, y por eso el modelo final la mantiene.
+
+### Problemas encontrados y cómo se resolvieron
+
+1. **El primer dataset era imposible.** La mitad de las alteraciones copiaban la fuente, la tinta, el ruido y el desenfoque de la foto. Vistas a 768×576 eran indistinguibles del original, incluso para una persona. Los dos modelos se quedaron en AUC 0.50 (loss 0.693, adivinar). La solución fue etiquetar la dificultad (50 % fácil, 30 % media, 20 % difícil), reportar el recall por nivel y bajar la tasa de aprendizaje de 1e-3 a 3e-4.
+2. **El post-proceso desalineaba a las gemelas.** Cada foto se recortaba y reescalaba al azar por separado, y así no se podía recortar la misma ventana de las dos. Ahora comparten geometría (`draw_geometry`).
+3. **La validación era 35 veces más lenta que el entrenamiento.** Con `channels_last` + bf16, cuDNN arma un plan de ejecución nuevo por cada tamaño de imagen: 1.2 s por foto contra 35 ms sin `channels_last`. Se quitó `channels_last` y los tamaños se redondean a múltiplos de 128.
+
+## Líneas base sin deep learning
+
+| Método | Recall | Falsas alarmas | Ahorro (Q / 1,000) |
+|---|---|---|---|
+| No revisar nada | 0 % | 0 % | 0 (se pierden Q10,293 de fraude) |
+| Auditar todas las facturas | 100 % | 100 % | −19,107 |
+| Reglas FEL con **lectura perfecta** de los campos* | 47 % | 14 % | −77 |
+| ELA (análisis de nivel de error JPEG) | AUC 0.507 (azar) | | |
+| **FacturaSegura (it3, umbral 0.98)** | **89 %** | **0 %** | **9,264** |
+
+\* Las validaciones del Proyecto 3 (12/112 del IVA, módulo 11 del NIT, serie y número contra la autorización) aplicadas a los valores que se ven en la foto, suponiendo un OCR perfecto, lo cual favorece a las reglas. Atrapan los totales inflados cuando el IVA no se ajustó, pero no las fechas cambiadas ni un NIT válido de otra persona. Además dan falsas alarmas en facturas legítimas, como las de gasolineras, donde el IDP rompe el 12/112.
+
+ELA no sirve porque todas las fotos, auténticas o no, pasan por recompresión (WhatsApp), lo que borra la huella de la edición.
+
+## Modelo de valor
+
+Por cada 1,000 facturas de reembolso:
+
+```
+valor(t) = fraude detenido − costo de auditar las marcadas − fricción con empleados honestos
+fraude detenido  = 1000 · prevalencia · E[monto en riesgo · 1(p ≥ t) | alterada]
+costo de auditar = 1000 · P(p ≥ t) · Q10           (~10 min de un auditor)
+fricción         = 1000 · (1 − prevalencia) · FPR(t) · Q20   (tiempo y molestia del empleado acusado)
+```
+
+**Supuestos base:**
+- **Prevalencia:** 3 % de las facturas alteradas. Es una estimación; por eso es el parámetro que más se mueve en la sensibilidad.
+- **Costos:** Q10 por auditoría y Q20 de fricción por falsa alarma.
+- **Monto en riesgo:** sale del propio conjunto de prueba (en promedio Q343 por factura alterada).
+
+![Curva de valor](docs/curva_valor_it3_recortes.png)
+
+**Resultado (it3, umbral óptimo 0.98):** se auditan 27 de cada 1,000 facturas y se detienen Q9,532 de los Q10,293 de fraude. Con Q268 de auditoría y cero falsas alarmas en prueba, el **valor neto es de Q9,264 por cada 1,000 facturas**.
+
+- **Las probabilidades del modelo son muy decididas:** cualquier umbral entre 0.3 y 0.98 da más de Q8,500. Lo que destruye valor son los extremos. Con umbral 0 (auditar todo) se pierden Q19,107, porque la fricción y la auditoría de 970 facturas honestas cuestan más que todo el fraude.
+- **Rendimientos decrecientes:** el modelo final ya detiene el 93 % del fraude en quetzales. Aunque llegara al 100 %, el máximo posible sería Q10,293 − Q268 ≈ Q10,025, apenas +Q760 sobre lo actual. Mejorar el modelo vale la pena solo si hay más fraude difícil del supuesto.
+
+**Sensibilidad** (`docs/sensibilidad_it3.csv`): el umbral óptimo se queda en **0.98 en todos los escenarios**.
+
+| Escenario | Ahorro óptimo (Q / 1,000) | Auditar todo |
+|---|---|---|
+| Base (3 % alteradas) | 9,264 | −19,107 |
+| Prevalencia 1 % | 3,088 | −26,369 |
+| Prevalencia 5 % | 15,441 | −11,845 |
+| Prevalencia 10 % | 30,881 | +6,310 |
+| Costo de auditoría ±50 % | 9,130 – 9,398 | −24,107 / −14,107 |
+| Fricción ±50 % | 9,264 (no cambia: 0 falsas alarmas) | −28,807 / −9,407 |
+
+El valor es casi proporcional a la prevalencia, y es lo primero que una empresa tendría que estimar con sus propios datos. Auditar todo solo conviene si más del ~8 % de las facturas fueran alteradas.
+
+## Desempeño por tipo de alteración (it3, umbral 0.5)
+
+| Campo | Recall | | Técnica | Recall |
+|---|---|---|---|---|
+| NIT emisor / receptor | 100 % / 100 % | | Reescribir | 96 % |
+| Productos | 95 % | | Copiar un dígito | **32 %** |
+| Fecha | 92 % | | | |
+| Total | 91 % | | | |
+| IVA | **69 %** | | | |
+
+- **El punto ciego es copiar un dígito de la misma factura.** Es el mismo trazo, la misma tinta y el mismo ruido; solo queda un borde de pocos píxeles.
+- **El IVA** es un número chico, en una zona densa de montos.
+- **Tickets y facturas carta funcionan igual** (AUC 0.960 y 0.963).
+
+## Operación
+
+- **Latencia:** 41 ms por foto en GPU (RTX 3070) y 0.54 s en CPU (8 hilos), incluida la preparación de la imagen. Corre en cualquier laptop sin GPU.
+- **Costo por predicción:** ≈ Q0, porque corre local, sin API, y las fotos no salen de la computadora.
+- **Tamaño:** EfficientNet-B0 con la cabeza del mapa: 4.1 M de parámetros y 17 MB en disco.
+
+## Pendiente: fotos reales
+
+Las métricas anteriores son sintéticas. Falta medir con fotos reales: facturas auténticas y versiones editadas en el celular con apps comunes (`python -m eval.evaluate --model models/final/best.pt --real eval/real/real.csv`). Es de esperar una caída, sobre todo si las apps usan técnicas que el generador no imita.
