@@ -7,6 +7,9 @@ alineadas píxel a píxel y la única diferencia sistemática es la alteración.
 van siempre al mismo split.
 
     python -m src.build_dataset --out data/tamper --n-train 3000 --n-val 300 --n-test 300
+    # Lote extra con más casos difíciles (iteración 4)
+    python -m src.build_dataset --out data/tamper_dificil --n-train 3000 --n-val 0 --n-test 0 \
+        --seed 4040 --pesos 0.3 0.35 0.35 --p-copiar 0.8
 
 Crea data/tamper/<split>/images/*.jpg, masks/*.png (zona alterada) y metadata.jsonl con una
 línea por imagen: {"file", "label" (1 = alterada), "mask", "pair", "layout", "total", "tamper"}.
@@ -19,12 +22,12 @@ from multiprocessing import Pool
 from pathlib import Path
 
 from .synth_fel import make_invoice, photograph, render_carta, render_ticket
-from .tamper import draw_geometry, finalize, tamper
+from .tamper import NIVELES, draw_geometry, finalize, tamper
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def generate(seed: int, carta_frac: float):
+def generate(seed: int, carta_frac: float, pesos=NIVELES, p_copiar: float = 0.5):
     """Factura, foto auténtica y foto alterada a partir de una semilla (determinista)."""
     rng = random.Random(seed)
     for _ in range(20):  # reintenta si la factura no tiene campos alterables
@@ -32,17 +35,17 @@ def generate(seed: int, carta_frac: float):
         layout = "carta" if rng.random() < carta_frac else "ticket"
         doc, segs = render_carta(inv, rng) if layout == "carta" else render_ticket(inv, rng)
         photo, H = photograph(doc, rng)
-        t = tamper(photo, segs, H, inv, rng)
+        t = tamper(photo, segs, H, inv, rng, pesos, p_copiar)
         if t:
             return rng, inv, layout, photo, t
     raise RuntimeError(f"no se pudo alterar la factura con semilla {seed}")
 
 
 def make_pair(args):
-    idx, seed, out_dir, carta_frac = args
-    rng, inv, layout, photo, (fake, mask, info) = generate(seed, carta_frac)
+    idx, seed, out_dir, carta_frac, pesos, p_copiar = args
+    rng, inv, layout, photo, (fake, mask, info) = generate(seed, carta_frac, pesos, p_copiar)
     base = {"pair": idx, "layout": layout, "categoria": inv["cat"], "total": inv["total"], "seed": seed,
-            "carta_frac": carta_frac, "gt": inv["gt"]}
+            "carta_frac": carta_frac, "pesos": list(pesos), "p_copiar": p_copiar, "gt": inv["gt"]}
     recs = []
     geo = draw_geometry(rng)  # misma geometría para las dos: quedan alineadas píxel a píxel
     for label, img, m in [(0, photo, None), (1, fake, mask)]:
@@ -57,11 +60,12 @@ def make_pair(args):
     return recs
 
 
-def build(out: Path, split: str, n: int, base_seed: int, workers: int, carta_frac: float):
+def build(out: Path, split: str, n: int, base_seed: int, workers: int, carta_frac: float,
+          pesos=NIVELES, p_copiar: float = 0.5):
     d = out / split
     (d / "images").mkdir(parents=True, exist_ok=True)
     (d / "masks").mkdir(parents=True, exist_ok=True)
-    jobs = [(i, base_seed * 1_000_003 + i, d, carta_frac) for i in range(n)]
+    jobs = [(i, base_seed * 1_000_003 + i, d, carta_frac, pesos, p_copiar) for i in range(n)]
     with Pool(workers) as pool, (d / "metadata.jsonl").open("w", encoding="utf-8") as fh:
         for k, recs in enumerate(pool.imap(make_pair, jobs, chunksize=4), 1):
             for r in recs:
@@ -79,9 +83,12 @@ if __name__ == "__main__":
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--carta-frac", type=float, default=0.25)
+    p.add_argument("--pesos", type=float, nargs=3, default=list(NIVELES), metavar=("FACIL", "MEDIO", "DIFICIL"),
+                   help="mezcla de dificultad de las alteraciones")
+    p.add_argument("--p-copiar", type=float, default=0.5, help="en las difíciles, probabilidad de copiar un dígito")
     a = p.parse_args()
     out = Path(a.out)
     for k, (split, n) in enumerate([("train", a.n_train), ("val", a.n_val), ("test", a.n_test)]):
         if n:
-            build(out, split, n, a.seed + k, a.workers, a.carta_frac)  # semilla distinta por split
+            build(out, split, n, a.seed + k, a.workers, a.carta_frac, a.pesos, a.p_copiar)  # semilla distinta por split
     print(f"Listo: {out}")

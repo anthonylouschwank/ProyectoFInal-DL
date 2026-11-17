@@ -3,6 +3,8 @@
     python -m train.train --head gap  --size 768 576 --out models/it1_gap          # foto reducida, clasificador estándar
     python -m train.train --head mapa --size 768 576 --out models/it2_mapa         # foto reducida, mapa de sospecha
     python -m train.train --head mapa --crop 512 --out models/it3_recortes         # recortes a resolución completa
+    python -m train.train --head mapa --crop 512 --epochs 15 --extra-train data/tamper_dificil/train \
+        --out models/it4_mas_dificiles                                              # + lote con más casos difíciles
     python -m train.train --smoke                                                   # prueba rápida
 
 Con --crop N se entrena con recortes de N×N a resolución completa: por cada par se toma la
@@ -186,6 +188,11 @@ def main(a):
     data = Path(a.data)
     lim = 64 if a.smoke else 0
     tr, va = load_split(data / "train", lim), load_split(data / "val", 32 if a.smoke else 0)
+    for i, d in enumerate(a.extra_train):  # lotes extra: se renumeran los pares para que no choquen
+        extra = load_split(Path(d), lim)
+        for r in extra:
+            r["pair"] = f"extra{i}_{r['pair']}"
+        tr += extra
     print(f"train={len(tr)} val={len(va)} tamaño={a.size} cabeza={a.head} peso_mascara={a.seg_weight}", flush=True)
     config = {k: v for k, v in vars(a).items() if k in ("backbone", "head", "topk", "size", "seg_weight", "lr", "crop")}
     config["size"] = list(a.size)
@@ -255,6 +262,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--data", default=str(ROOT / "data" / "tamper"))
     p.add_argument("--out", default=str(ROOT / "models" / "detector"))
+    p.add_argument("--extra-train", nargs="*", default=[], help="carpetas extra con metadata.jsonl para entrenar")
     p.add_argument("--backbone", default="efficientnet_b0")
     p.add_argument("--head", choices=["gap", "mapa"], default="mapa")
     p.add_argument("--topk", type=int, default=8)

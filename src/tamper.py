@@ -226,7 +226,10 @@ def copiar_digito(img, seg, H, segs, rng):
 
 # ------------------------------------------------------------------ interfaz pública
 
-def tamper(img, segs, H, inv, rng):
+NIVELES = (0.5, 0.3, 0.2)  # probabilidad de fácil, medio y difícil
+
+
+def tamper(img, segs, H, inv, rng, pesos=NIVELES, p_copiar=0.5):
     """Altera un campo de la foto. Devuelve (imagen, máscara, info) o None si no se pudo."""
     disponibles = {s["tag"] for s in segs}
     campos = [(c, p) for c, p in CAMPOS if c in disponibles]
@@ -234,8 +237,8 @@ def tamper(img, segs, H, inv, rng):
         return None
     tag = rng.choices([c for c, _ in campos], [p for _, p in campos])[0]
     seg = rng.choice([s for s in segs if s["tag"] == tag])
-    nivel = rng.choices(["facil", "medio", "dificil"], [0.5, 0.3, 0.2])[0]
-    if nivel == "dificil" and tag != "nit_receptor" and rng.random() < 0.5:
+    nivel = rng.choices(["facil", "medio", "dificil"], list(pesos))[0]
+    if nivel == "dificil" and tag != "nit_receptor" and rng.random() < p_copiar:
         r = copiar_digito(img, seg, H, segs, rng)
         if r:
             out, mask, new_text = r
