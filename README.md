@@ -16,11 +16,11 @@ Foto ─► EfficientNet-B0 (resolución completa) ─► mapa de sospecha (1/16
 ```
 
 - **Datos:** facturas FEL sintéticas (generador del Proyecto 3) fotografiadas con perspectiva, sombras, desteñido y ruido. Cada foto tiene una **gemela alterada** con exactamente la misma geometría. Las alteraciones imitan lo que haría alguien con una app del celular: reescribir el total, la fecha o un NIT, o copiar un dígito de la misma factura. Hay tres niveles de dificultad y cada una guarda su **máscara** y su **monto en riesgo**. Después ambas fotos pasan por recorte, brillo, reescalado y recompresión tipo WhatsApp, para que el modelo no use atajos.
-- **Modelo:** el clasificador estándar (promedio global + capa lineal) no aprende nada, porque la alteración es un detalle chico dentro de la foto. El modelo final produce un **mapa de sospecha por zona**, supervisado con las máscaras, y clasifica con el promedio de las *k* zonas más sospechosas.
+- **Modelo:** en un clasificador estándar (promedio global + capa lineal) la alteración, que es un detalle chico dentro de la foto, se diluye; llega a AUC 0.95, pero con más falsas alarmas. El modelo final produce un **mapa de sospecha por zona**, supervisado con las máscaras, y clasifica con el promedio de las *k* zonas más sospechosas.
 - **Entrenamiento:** recortes de 512×512 **a resolución completa**, tomando la misma ventana de la foto auténtica y de su gemela alterada. Así el modelo aprende la alteración y no el estilo de la factura. Al usarlo, recibe la foto completa (la red es totalmente convolucional).
 - **Modelo de valor:** fraude detenido − costo de auditar las marcadas − fricción por acusar a empleados honestos, por cada 1,000 facturas. El umbral se elige maximizando ese valor, con análisis de sensibilidad.
 
-Resultados de las iteraciones: [RESULTADOS.md](RESULTADOS.md).
+Resultados de las iteraciones: [RESULTADOS.md](RESULTADOS.md). Para seguir entrenando (configuración actual, qué se probó y qué intentar): [ITERACIONES.md](ITERACIONES.md).
 
 ## Instalación
 
@@ -48,7 +48,7 @@ Subir la foto de una factura. La app responde **Aprobar** o **Auditar**, con la 
 # 1. Datos: 3,000 pares de entrenamiento, 300 de validación y 300 de prueba (~12 min con 8 núcleos, ~1 GB)
 python -m src.build_dataset
 
-# 2. Entrenamiento (RTX 3070 Laptop: ~25-30 min cada uno)
+# 2. Entrenamiento (RTX 3070 Laptop: 30-40 min cada uno)
 python -m train.train --head gap  --size 768 576 --out models/it1_gap        # it1: foto reducida, clasificador estándar
 python -m train.train --head mapa --size 768 576 --out models/it2_mapa       # it2: foto reducida, mapa de sospecha
 python -m train.train --head mapa --crop 512     --out models/it3_recortes   # it3: recortes a resolución completa (final)
