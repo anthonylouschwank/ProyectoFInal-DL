@@ -26,6 +26,7 @@ Todas las métricas son sobre el **conjunto de prueba sintético**: 300 facturas
 | it2 | + mapa de sospecha a 1/16, top-8 y supervisión con máscaras | 0.954 | 87 % | 95 / 95 / 56 % | 71 % | 8,654 | 39 min |
 | **it3 (final)** | + **recortes de 512 a resolución completa** de las gemelas | **0.961** | **90 %** | **99 / 97 / 66 %** | **80 %** | **9,264** | 27 min |
 | it3b (ablación) | it3 sin supervisión con máscaras | 0.964 | 90 % | 97 / 95 / 61 % | 0 % (Grad-CAM 5 %) | 9,315 | 22 min |
+| it4 | it3 + 3,000 pares extra con más casos difíciles (30/35/35 %, más dígitos copiados), 15 épocas | **0.984** | **91 %** | 99 / 96 / **80 %** | 79 % | 9,059 | 77 min |
 
 \* Con umbral 0.5. \*\* Porcentaje de fotos alteradas en las que el punto más sospechoso del mapa cae dentro de la zona editada.
 
@@ -37,6 +38,7 @@ Todos los entrenamientos se hicieron en una RTX 3070 Laptop (8 GB): 10 épocas, 
 
 - **Resolución completa (it2 → it3)** es el cambio que más mueve el valor (+Q610 por cada 1,000 facturas) y el recall en las alteraciones difíciles (56 → 66 %). Las huellas de una edición (el borde del parche, el ruido distinto, la fuente que no calza) miden unos pocos píxeles; al reducir la foto a la mitad se pierden. Además, entrenar con recortes es *más rápido* (27 contra 39 minutos).
 - **Mapa de sospecha + máscaras (it1 → it2)** mejora poco la detección (+0.004 AUC), pero reduce las falsas alarmas a la mitad con umbral 0.5 (3.7 % → 1.7 %) y hace que el modelo señale dónde está la alteración: el mapa acierta la zona en 71 % de los casos, mientras que Grad-CAM sobre el clasificador estándar solo en 25 %.
+- **Más casos difíciles (it3 → it4):** es la mejor iteración en métricas técnicas. El AUC sube de 0.961 a 0.984, el recall en alteraciones difíciles de 66 a 80 %, en dígitos copiados de 32 a 63 % y en el IVA de 69 a 85 %. **Pero no genera más valor:** el modelo se vuelve más desconfiado con las facturas auténticas (falsas alarmas con umbral 0.5: 1.7 % → 6.0 %; percentil 95 de la probabilidad en auténticas: 0.11 → 0.62). Para no acusar a empleados honestos hay que subir el umbral a 0.99, y en ese punto el recall queda igual que con it3 (89 %). El ahorro es Q9,059 contra Q9,264. Lo mismo pasa si se supone un fraude real más sofisticado (30/35/35 %): Q7,936 contra Q8,045. Promediar it3 e it4 tampoco mejora (Q9,210). La validación además alcanzó su mejor AUC en la época 5 y bajó después (sobreajuste al lote difícil). **Por eso el modelo final sigue siendo it3:** más simple, mejor calibrado y con igual o más valor. Es el ejemplo más claro de que la métrica técnica y el valor de negocio no siempre se mueven juntos.
 - **Ablación sin máscaras (it3b):** detecta igual de bien, pero el mapa **deja de señalar la zona editada** (0 % contra 80 %), y Grad-CAM tampoco (5 %). El modelo detecta sin poder mostrar dónde, y eso le quita al auditor la explicación. La supervisión con máscaras no se justifica por la métrica, sino por la explicabilidad, y por eso el modelo final la mantiene.
 
 ### Problemas encontrados y cómo se resolvieron
@@ -80,7 +82,7 @@ fricción         = 1000 · (1 − prevalencia) · FPR(t) · Q20   (tiempo y mol
 **Resultado (it3, umbral óptimo 0.98):** se auditan 27 de cada 1,000 facturas y se detienen Q9,532 de los Q10,293 de fraude. Con Q268 de auditoría y cero falsas alarmas en prueba, el **valor neto es de Q9,264 por cada 1,000 facturas**.
 
 - **Las probabilidades del modelo son muy decididas:** cualquier umbral entre 0.3 y 0.98 da más de Q8,500. Lo que destruye valor son los extremos. Con umbral 0 (auditar todo) se pierden Q19,107, porque la fricción y la auditoría de 970 facturas honestas cuestan más que todo el fraude.
-- **Rendimientos decrecientes:** el modelo final ya detiene el 93 % del fraude en quetzales. Aunque llegara al 100 %, el máximo posible sería Q10,293 − Q268 ≈ Q10,025, apenas +Q760 sobre lo actual. Mejorar el modelo vale la pena solo si hay más fraude difícil del supuesto.
+- **Rendimientos decrecientes:** el modelo final ya detiene el 93 % del fraude en quetzales. Aunque llegara al 100 %, el máximo posible sería Q10,293 − Q268 ≈ Q10,025, apenas +Q760 sobre lo actual. La iteración 4 lo confirmó: 77 minutos más de entrenamiento y +0.023 de AUC no dieron más ahorro. Desde aquí, el valor depende más de calibrar bien las probabilidades y de validar los supuestos (prevalencia) que de un modelo más preciso.
 
 **Sensibilidad** (`docs/sensibilidad_it3.csv`): el umbral óptimo se queda en **0.98 en todos los escenarios**.
 
