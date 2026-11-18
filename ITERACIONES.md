@@ -6,8 +6,8 @@ Guía corta para quien continúe el entrenamiento en otra computadora (persona o
 
 - **Modelo final: it5** (`models/final/best.pt`, también en `models/it5_menos_falsas/`). Los pesos no están en git: copiarlos aparte o reentrenar (~40 min).
 - **Prueba sintética:** AUC 0.981, recall con 1 % de falsas alarmas 93 %, recall en difíciles 80 %, localización 87 %.
-- **Valor:** **Q9,298 por cada 1,000 facturas** con umbral 0.80.
-- **Techo de valor:** con estos supuestos el máximo posible es ≈ Q10,000, así que solo quedan ~Q700 por ganar. Se gana más **bajando falsas alarmas** que subiendo el AUC (ver it4 → it5).
+- **Valor:** **Q9,162 por cada 1,000 facturas** con umbral 0.88, elegido en validación.
+- **Techo de valor:** con estos supuestos el máximo posible es ≈ Q10,000, así que solo quedan ~Q800 por ganar. Se gana más **bajando falsas alarmas** que subiendo el AUC (ver it4 → it5).
 
 ## Configuración de it5
 
@@ -35,7 +35,7 @@ Es la misma configuración de it3, con tres cambios: el lote extra de entrenamie
 | | Semilla | 42 |
 | | Selección | Mejor **recall con ≤1 % de falsas alarmas** en validación (`--select "recall@fpr1%"`); el AUC desempata |
 | Inferencia | Resolución | Foto completa, máx. 1600 px por lado, relleno a múltiplo de 128 |
-| | Umbral | 0.80 (óptimo de valor, en `models/final/umbral.json`) |
+| | Umbral | 0.88: el que maximiza el ahorro **en validación** (en `models/final/umbral.json`) |
 | Valor | Supuestos | Prevalencia 3 %, Q10 por auditoría, Q20 de fricción por falsa alarma |
 
 Tiempos en una RTX 3070 Laptop: ~4 min por época (6,000 pares), ~20 min de `eval/evaluate.py` (calcula Grad-CAM por foto), 3.6 GB de VRAM.
@@ -44,20 +44,21 @@ Tiempos en una RTX 3070 Laptop: ~4 min por época (6,000 pares), ~20 min de `eva
 
 | Iteración | Cambio | AUC prueba | Recall difícil | FPR @0.5 | Ahorro Q/1000 | Conclusión |
 |---|---|---|---|---|---|---|
-| it1 | Foto reducida 768×576, promedio global + lineal | 0.950 | 59 % | 3.7 % | 8,213 | Línea base |
-| it2 | + mapa de sospecha + máscaras | 0.954 | 56 % | 1.7 % | 8,654 | Menos falsas alarmas, localiza |
-| it3 | + recortes 512 a resolución completa | 0.961 | 66 % | 1.7 % | 9,264 | Gran salto por la resolución |
-| it3b | it3 sin máscaras (`--seg-weight 0`) | 0.964 | 61 % | 0.0 % | 9,315 | Igual valor, pero el mapa ya no localiza (0 %) |
-| it4 | + 3,000 pares con más difíciles (0.3/0.35/0.35, `--p-copiar 0.8`), 15 épocas | 0.984 | 80 % | 6.0 % | 9,059 | Mejor AUC, **más falsas alarmas → no más valor**. Mejor validación en la época 5 y luego baja |
-| **it5** | **datos de it4 + `--p-mask 0.5` + `--select "recall@fpr1%"`**, 10 épocas | **0.981** | **80 %** | **3.3 %** | **9,298** | **Final.** Conserva lo de it4 en difíciles con la mitad de falsas alarmas; localización 87 % |
+| it1 | Foto reducida 768×576, promedio global + lineal | 0.950 | 59 % | 3.7 % | 7,791 | Línea base |
+| it2 | + mapa de sospecha + máscaras | 0.954 | 56 % | 1.7 % | 8,643 | Menos falsas alarmas, localiza |
+| it3 | + recortes 512 a resolución completa | 0.961 | 66 % | 1.7 % | 9,000 | Gran salto por la resolución |
+| it3b | it3 sin máscaras (`--seg-weight 0`) | 0.964 | 61 % | 0.0 % | 9,294 | Ahorro dentro del ruido, pero el mapa ya no localiza (0 %): descartado |
+| it4 | + 3,000 pares con más difíciles (0.3/0.35/0.35, `--p-copiar 0.8`), 15 épocas | 0.984 | 80 % | 6.0 % | 8,921 | Mejor AUC, **más falsas alarmas → no más valor**. Mejor validación en la época 5 y luego baja |
+| **it5** | **datos de it4 + `--p-mask 0.5` + `--select "recall@fpr1%"`**, 10 épocas | **0.981** | **80 %** | **3.3 %** | **9,162** | **Final.** Conserva lo de it4 en difíciles con la mitad de falsas alarmas; localización 87 % |
+| it6 | it5 + `--peso-monto` + `--select ahorro` | 0.980 | 81 % | — | 8,968 | Pierde localización (80 %); el umbral de validación da 1.7 % de falsas alarmas en prueba. Elegir por ahorro en validación sobreajusta |
 
-El ruido de la evaluación es de ±Q200 (una o dos facturas del conjunto de prueba). Diferencias menores a eso no cuentan.
+**El ahorro de la tabla usa el umbral elegido en validación** y aplicado a prueba (protocolo corregido después de it5; todas las filas se recalcularon así). El ruido es de ±Q200–300: una falsa alarma más o menos mueve ~Q100. Diferencias menores a eso no cuentan.
 
 ## Ideas para las siguientes iteraciones
 
 Ordenadas por lo que esperamos que aporte. **Cambiar una cosa por iteración.**
 
-Ya hechas en it5: elegir el checkpoint por recall con 1 % de falsas alarmas y mostrar más recortes sin editar.
+Ya hechas: elegir el checkpoint por recall con 1 % de falsas alarmas y mostrar más recortes sin editar (it5, funcionó), y la pérdida ponderada por monto con selección por ahorro en validación (it6, no funcionó). También se probó, sin reentrenar, una regla de auditoría según el monto reclamado: no mejoró el ahorro.
 
 1. **Llevar más lejos lo de it5:** `--p-mask 0.35`, o darle más peso a la clase auténtica en la BCE. *El peso requiere código* (`--peso-autenticas` en `train/train.py`); `--p-mask` es solo flag.
 2. **it5 con lr más baja** (1.5e-4) o 15 épocas: en it5 la validación seguía subiendo en la época 10. Solo flags.
@@ -79,10 +80,10 @@ python -m eval.evaluate --model models/it6_<cambio>/best.pt
 ```
 
 1. **No elegir nada mirando el conjunto de prueba.** Comparar en validación (`models/<it>/logs/epochs.csv`) y evaluar en prueba solo a los candidatos.
-2. **El criterio de decisión es el ahorro en el umbral óptimo** (`results/<it>_test/metricas.json` → `valor.en_umbral_optimo.valor_neto_Q_1000`). El AUC, el recall en difíciles y la localización sirven para desempatar o para explicar.
+2. **El criterio de decisión es el ahorro con el umbral elegido en validación** (`results/<it>_test/metricas.json` → `valor.en_umbral_optimo.valor_neto_Q_1000`). **No** usar `valor.oraculo_prueba`: es el óptimo mirando la prueba y está inflado. Como el ruido es de ±Q200–300, para aceptar un modelo se piden además, en validación, localización ≥ 85 % y falsas alarmas ≤ 1 %. El AUC y el recall en difíciles sirven para desempatar o para explicar.
 3. **No usar un modelo que ya no localice** (`localizacion_mapa` cerca de 0, como it3b), aunque tenga buen valor: la app depende del mapa para explicarle al auditor.
 4. Por cada iteración, agregar una fila a `docs/comparacion_iteraciones.csv` y a la tabla de `RESULTADOS.md`, y copiar `curvas.png` y `curva_valor.png` a `docs/`.
-5. Si una iteración gana por más de ~Q200: copiar su `best.pt` a `models/final/`, correr `eval.evaluate` con `--guardar-umbral` y copiar `curva_valor.png`, `metricas.json` y `sensibilidad.csv` a `models/final/resultados/` (los usa la app).
+5. Si una iteración gana por más de ~Q300 y cumple los criterios: copiar su `best.pt` a `models/final/`, correr `eval.evaluate` con `--guardar-umbral` (guarda el umbral elegido en validación) y copiar `curva_valor.png`, `metricas.json` y `sensibilidad.csv` a `models/final/resultados/` (los usa la app).
 
 ## Advertencias técnicas
 
