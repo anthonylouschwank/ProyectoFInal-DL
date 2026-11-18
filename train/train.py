@@ -5,13 +5,15 @@
     python -m train.train --head mapa --crop 512 --out models/it3_recortes         # recortes a resolución completa
     python -m train.train --head mapa --crop 512 --epochs 15 --extra-train data/tamper_dificil/train \
         --out models/it4_mas_dificiles                                              # + lote con más casos difíciles
+    python -m train.train --head mapa --crop 512 --extra-train data/tamper_dificil/train --p-mask 0.5 \
+        --select recall@fpr1% --out models/it5_menos_falsas                         # it4 corrigiendo falsas alarmas
     python -m train.train --smoke                                                   # prueba rápida
 
 Con --crop N se entrena con recortes de N×N a resolución completa: por cada par se toma la
 misma ventana de la foto auténtica y de su gemela alterada (están alineadas píxel a píxel),
 casi siempre sobre la zona editada. La validación y el uso son con la foto completa.
 
-Guarda en --out: best.pt (mejor AUC de validación), logs/epochs.csv, logs/curvas.png y
+Guarda en --out: best.pt (mejor métrica de validación según --select), logs/epochs.csv, logs/curvas.png y
 logs/train_summary.json (tiempo, GPU y memoria: costo de entrenamiento para el informe).
 """
 
@@ -27,7 +29,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -150,7 +152,9 @@ def evaluate(model, loader, device):
         ps += torch.sigmoid(logit.float()).tolist()
     model.train()
     ys, ps = np.array(ys), np.array(ps)
+    fpr, tpr, _ = roc_curve(ys, ps)
     return {"val_loss": float(np.mean(losses)), "auc": float(roc_auc_score(ys, ps)),
+            "recall@fpr1%": float(tpr[fpr <= 0.01].max()),
             "ap": float(average_precision_score(ys, ps)), "acc": float(((ps >= 0.5) == ys).mean()),
             "recall@0.5": float((ps[ys == 1] >= 0.5).mean()), "fpr@0.5": float((ps[ys == 0] >= 0.5).mean())}
 
@@ -198,7 +202,7 @@ def main(a):
     config["size"] = list(a.size)
     if a.crop:
         config |= {"native": True, "max_side": 1600}
-        tds = CropPairs(tr, a.crop)
+        tds = CropPairs(tr, a.crop, a.p_mask)
         vl = DataLoader(FullImages(va, config), batch_size=1, num_workers=a.workers, pin_memory=True)
     else:
         tds = TamperDataset(tr, a.size, True)
@@ -211,7 +215,7 @@ def main(a):
     epochs = 1 if a.smoke else a.epochs
     total = epochs * len(tl)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=total, pct_start=0.1)
-    rows, best, t0 = [], -1.0, time.time()
+    rows, best, t0 = [], (-1.0, -1.0), time.time()
     torch.cuda.reset_peak_memory_stats()
     for epoch in range(1, epochs + 1):
         te, tot, tot_cls, n = time.time(), 0.0, 0.0, 0
@@ -242,17 +246,19 @@ def main(a):
             w.writerows(rows)
         plot(out / "logs")
         flag = ""
-        if mv["auc"] > best:
-            best = mv["auc"]
+        score = (mv[a.select], mv["auc"])  # métrica elegida; el AUC desempata
+        if score > best:
+            best = score
             torch.save({"state_dict": model.state_dict(), "config": config, "epoca": epoch, "val": mv}, out / "best.pt")
             flag = "  <- guardado"
-        print(f"época {epoch}/{epochs}  loss {row['train_loss']:.4f}  val AUC {mv['auc']:.4f}  AP {mv['ap']:.4f}  "
+        print(f"época {epoch}/{epochs}  loss {row['train_loss']:.4f}  val AUC {mv['auc']:.4f}  "
+              f"recall@fpr1% {mv['recall@fpr1%']:.3f}  AP {mv['ap']:.4f}  "
               f"acc {mv['acc']:.3f}  ({row['min']} min, VRAM máx {torch.cuda.max_memory_allocated() / 2**30:.1f} GB){flag}",
               flush=True)
 
     summary = {"config": config, "gpu": torch.cuda.get_device_name(), "minutos": round((time.time() - t0) / 60, 1),
                "vram_max_gb": round(torch.cuda.max_memory_allocated() / 2**30, 2), "epocas": epochs,
-               "n_train": len(tr), "n_val": len(va), "mejor_auc_val": best,
+               "n_train": len(tr), "n_val": len(va), "seleccion": a.select, "mejor_val": list(best),
                "parametros_M": round(sum(p.numel() for p in model.parameters()) / 1e6, 2)}
     (out / "logs" / "train_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(json.dumps(summary, indent=1))
@@ -269,6 +275,10 @@ if __name__ == "__main__":
     p.add_argument("--seg-weight", type=float, default=1.0, help="peso de la pérdida del mapa con la máscara")
     p.add_argument("--size", type=int, nargs=2, default=[768, 576], metavar=("ALTO", "ANCHO"))
     p.add_argument("--crop", type=int, default=0, help="entrenar con recortes NxN a resolución completa")
+    p.add_argument("--p-mask", type=float, default=0.75,
+                   help="con --crop, fracción de recortes centrados en la zona editada (el resto, al azar)")
+    p.add_argument("--select", choices=["auc", "recall@fpr1%"], default="auc",
+                   help="métrica de validación para guardar best.pt")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-4)
