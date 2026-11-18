@@ -11,6 +11,10 @@ Modelo de valor (por cada 1,000 facturas de reembolso):
 Se compara contra "no revisar nada" (valor 0) y "auditar todo". Los supuestos están en
 --prevalencia, --costo-revision y --costo-friccion, y se mueven ±50 % en la sensibilidad.
 
+El umbral se elige en el conjunto de VALIDACIÓN (el que maximiza el valor ahí) y el valor
+se reporta en prueba con ese umbral. El óptimo calculado directamente en prueba se guarda
+solo como referencia ("oraculo_prueba"): elegirlo así sería ajustar a la prueba.
+
 Líneas base sin deep learning:
 - reglas FEL: las validaciones del Proyecto 3 sobre los valores *visibles* en la foto,
   suponiendo una lectura perfecta (cota superior: en la realidad habría que leerlos con OCR)
@@ -97,6 +101,20 @@ def point_value(tpr, fpr, monto_detectado_medio, prev, c_rev, c_fric):
     return 1000 * prev * monto_detectado_medio - marcadas * c_rev - 1000 * (1 - prev) * fpr * c_fric
 
 
+def val_predictions(model, cfg, data_dir: Path) -> pd.DataFrame:
+    """Probabilidades en validación (sin Grad-CAM: es rápido) para elegir el umbral."""
+    rows = []
+    for r in (json.loads(line) for line in (data_dir / "val" / "metadata.jsonl").open(encoding="utf-8")):
+        prob, _ = predict(model, cfg, Image.open(data_dir / "val" / r["file"]))
+        rows.append({"label": r["label"], "prob": prob,
+                     "monto": r["tamper"]["monto_en_riesgo"] if r["label"] else 0.0})
+    return pd.DataFrame(rows)
+
+
+def best_threshold(curve: pd.DataFrame) -> float:
+    return float(curve.loc[curve.valor_neto_Q_1000.idxmax()].umbral)
+
+
 # ---------------------------------------------------------------- principal
 
 def load_records(a):
@@ -178,14 +196,22 @@ def main(a):
         m["reglas_recall"] = float(alt.reglas.mean())
         m["reglas_fpr"] = float(df[df.label == 0].reglas.mean())
 
-    # Valor
-    curve = value_curve(df, a.prevalencia, a.costo_revision, a.costo_friccion)
+    # Valor: el umbral se elige en validación y se evalúa en prueba
+    dv = val_predictions(model, cfg, Path(a.data))
+    dv.to_csv(out / "predicciones_val.csv", index=False)
+    vkw = {"prev": a.prevalencia, "c_rev": a.costo_revision, "c_fric": a.costo_friccion}
+    t_val = best_threshold(value_curve(dv, **vkw))
+    curve = value_curve(df, **vkw)
     curve.to_csv(out / "curva_valor.csv", index=False)
-    best = curve.loc[curve.valor_neto_Q_1000.idxmax()]
+    best = curve[curve.umbral == t_val].iloc[0]
+    oraculo = curve.loc[curve.valor_neto_Q_1000.idxmax()]
     m["valor"] = {"supuestos": {"prevalencia": a.prevalencia, "costo_revision_Q": a.costo_revision,
                                 "costo_friccion_Q": a.costo_friccion},
                   "fraude_total_sin_control_Q_1000": 1000 * a.prevalencia * alt.monto.mean(),
-                  "umbral_optimo": float(best.umbral), "en_umbral_optimo": best.round(4).to_dict(),
+                  "umbral_optimo": t_val, "umbral_elegido_en": "validacion",
+                  "en_umbral_optimo": best.round(4).to_dict(),
+                  "oraculo_prueba": {"umbral": float(oraculo.umbral),
+                                     "valor_neto_Q_1000": round(float(oraculo.valor_neto_Q_1000), 1)},
                   "auditar_todo_Q_1000": point_value(1, 1, alt.monto.mean(), a.prevalencia, a.costo_revision,
                                                      a.costo_friccion)}
     if "reglas" in df:
@@ -201,9 +227,10 @@ def main(a):
                       ("fricción +50%", {"c_fric": a.costo_friccion * 1.5})]:
         args = {"prev": a.prevalencia, "c_rev": a.costo_revision, "c_fric": a.costo_friccion, **kw}
         c = value_curve(df, **args)
-        b = c.loc[c.valor_neto_Q_1000.idxmax()]
+        t_s = best_threshold(value_curve(dv, **args))  # umbral re-elegido en validación para el escenario
+        b = c[c.umbral == t_s].iloc[0]
         base_t = c[c.umbral == best.umbral].iloc[0]
-        sens.append({"escenario": label, "umbral_optimo": b.umbral, "valor_optimo_Q_1000": round(b.valor_neto_Q_1000, 1),
+        sens.append({"escenario": label, "umbral_optimo": t_s, "valor_optimo_Q_1000": round(b.valor_neto_Q_1000, 1),
                      "valor_con_umbral_base_Q_1000": round(base_t.valor_neto_Q_1000, 1),
                      "auditar_todo_Q_1000": round(point_value(1, 1, alt.monto.mean(), args["prev"], args["c_rev"],
                                                               args["c_fric"]), 1)})
@@ -224,7 +251,8 @@ def main(a):
     if "reglas_Q_1000" in m["valor"]:
         ax[0].axhline(m["valor"]["reglas_Q_1000"], color="purple", ls="-.", lw=1, label="reglas FEL (lectura perfecta)")
     ax[0].axvline(best.umbral, color="k", ls=":", lw=1)
-    ax[0].set(title=f"Valor por cada 1,000 facturas (óptimo: umbral {best.umbral:.2f}, Q{best.valor_neto_Q_1000:,.0f})",
+    ax[0].set(title=f"Valor por cada 1,000 facturas (umbral {best.umbral:.2f} elegido en validación: "
+                    f"Q{best.valor_neto_Q_1000:,.0f})",
               xlabel="umbral de probabilidad", ylabel="Q")
     ax[0].legend(fontsize=8)
     ax[1].plot(fpr_c, tpr_c, label=f"detector (AUC {m['auc']:.3f})")
@@ -245,7 +273,8 @@ def main(a):
     resumen = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in m.items()
                if k not in ("sensibilidad", "valor")}
     print(json.dumps(resumen, ensure_ascii=False, indent=1))
-    print(f"Valor: umbral óptimo {best.umbral:.2f} -> Q{best.valor_neto_Q_1000:,.0f} por 1,000 facturas "
+    print(f"Valor: umbral {best.umbral:.2f} (elegido en validación) -> Q{best.valor_neto_Q_1000:,.0f} por 1,000 facturas "
+          f"[óptimo mirando la prueba: {oraculo.umbral:.2f} -> Q{oraculo.valor_neto_Q_1000:,.0f}] "
           f"(auditar todo: Q{m['valor']['auditar_todo_Q_1000']:,.0f}; "
           f"reglas: Q{m['valor'].get('reglas_Q_1000', float('nan')):,.0f}; "
           f"fraude total sin control: Q{m['valor']['fraude_total_sin_control_Q_1000']:,.0f})")
@@ -255,7 +284,7 @@ def main(a):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True)
-    p.add_argument("--data", default=str(ROOT / "data" / "tamper"))
+    p.add_argument("--data", default=str(ROOT / "data" / "tamper"), help="carpeta con val/ y test/")
     p.add_argument("--split", default="test")
     p.add_argument("--real", default="", help="CSV con archivo_imagen,label,monto_en_riesgo[,campo]")
     p.add_argument("--prevalencia", type=float, default=0.03, help="fracción de facturas alteradas")

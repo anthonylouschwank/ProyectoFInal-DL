@@ -87,14 +87,21 @@ def _pad(im: Image.Image, W: int, H: int) -> Image.Image:
 
 
 class CropPairs(Dataset):
-    """Por cada par, la misma ventana de la foto auténtica y de la alterada."""
+    """Por cada par, la misma ventana de la foto auténtica y de la alterada.
 
-    def __init__(self, recs, crop: int, p_mask: float = 0.75):
+    Con peso_monto, el recorte alterado pesa en la pérdida según el monto en riesgo de su
+    alteración (log, normalizado a promedio 1, entre 0.3 y 3): un fraude de Q1,000 importa
+    más que uno de Q5. Los recortes auténticos, o los alterados cuya ventana no incluye la
+    edición, pesan 1."""
+
+    def __init__(self, recs, crop: int, p_mask: float = 0.75, peso_monto: bool = False):
         by = {}
         for r in recs:
             by.setdefault(r["pair"], {})[r["label"]] = r
         self.pairs = [v for v in by.values() if 0 in v and 1 in v]
         self.crop, self.p_mask = crop, p_mask
+        logm = np.array([np.log1p(max(0.0, v[1]["tamper"]["monto_en_riesgo"])) for v in self.pairs])
+        self.pesos = np.clip(logm / logm.mean(), 0.3, 3.0) if peso_monto else np.ones(len(self.pairs))
 
     def __len__(self):
         return len(self.pairs)
@@ -121,7 +128,8 @@ class CropPairs(Dataset):
         g = c // 16
         x = torch.stack([to_tensor(A.crop(box)), to_tensor(T.crop(box))])
         m = torch.stack([torch.zeros(g, g), mask_grid(mc, g, g)])
-        return x, torch.tensor([0.0, label]), m
+        w = torch.tensor([1.0, float(self.pesos[i]) if label else 1.0])
+        return x, torch.tensor([0.0, label]), m, w
 
 
 class FullImages(Dataset):
@@ -136,14 +144,29 @@ class FullImages(Dataset):
     def __getitem__(self, i):
         r = self.recs[i]
         x, _ = prepare(Image.open(Path(r["dir"]) / r["file"]), self.cfg)
-        return to_tensor(x), torch.tensor(float(r["label"])), torch.zeros(1)
+        monto = r["tamper"]["monto_en_riesgo"] if r["label"] else 0.0
+        return to_tensor(x), torch.tensor(float(r["label"])), torch.tensor(float(monto))
+
+
+def best_value(ys, ps, montos, prev=0.03, c_rev=10.0, c_fric=20.0):
+    """Ahorro por cada 1,000 facturas en el mejor umbral (mismo modelo de valor que eval/evaluate.py)."""
+    alt, aut = ys == 1, ys == 0
+    best = -np.inf
+    for t in np.linspace(0, 1, 101):
+        a = ps >= t
+        tpr, fpr = a[alt].mean(), a[aut].mean()
+        v = (1000 * prev * (montos[alt] * a[alt]).mean() - 1000 * (prev * tpr + (1 - prev) * fpr) * c_rev
+             - 1000 * (1 - prev) * fpr * c_fric)
+        best = max(best, v)
+    return float(best)
 
 
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()
-    ys, ps, losses = [], [], []
+    ys, ps, ms, losses = [], [], [], []
     for x, y, m in loader:
+        ms += m.flatten().tolist()
         x, y = x.to(device, non_blocking=True), y.to(device)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             logit, _ = model(x)
@@ -153,10 +176,13 @@ def evaluate(model, loader, device):
     model.train()
     ys, ps = np.array(ys), np.array(ps)
     fpr, tpr, _ = roc_curve(ys, ps)
-    return {"val_loss": float(np.mean(losses)), "auc": float(roc_auc_score(ys, ps)),
-            "recall@fpr1%": float(tpr[fpr <= 0.01].max()),
+    out = {"val_loss": float(np.mean(losses)), "auc": float(roc_auc_score(ys, ps)),
+           "recall@fpr1%": float(tpr[fpr <= 0.01].max()),
             "ap": float(average_precision_score(ys, ps)), "acc": float(((ps >= 0.5) == ys).mean()),
             "recall@0.5": float((ps[ys == 1] >= 0.5).mean()), "fpr@0.5": float((ps[ys == 0] >= 0.5).mean())}
+    if len(ms) == len(ys) and np.any(np.array(ms) > 0):  # validación con montos: ahorro en el mejor umbral
+        out["ahorro"] = best_value(ys, ps, np.array(ms))
+    return out
 
 
 def plot(log_dir: Path):
@@ -202,7 +228,7 @@ def main(a):
     config["size"] = list(a.size)
     if a.crop:
         config |= {"native": True, "max_side": 1600}
-        tds = CropPairs(tr, a.crop, a.p_mask)
+        tds = CropPairs(tr, a.crop, a.p_mask, a.peso_monto)
         vl = DataLoader(FullImages(va, config), batch_size=1, num_workers=a.workers, pin_memory=True)
     else:
         tds = TamperDataset(tr, a.size, True)
@@ -219,14 +245,17 @@ def main(a):
     torch.cuda.reset_peak_memory_stats()
     for epoch in range(1, epochs + 1):
         te, tot, tot_cls, n = time.time(), 0.0, 0.0, 0
-        for x, y, m in tl:
+        for batch in tl:
+            x, y, m = batch[:3]
+            w = batch[3] if len(batch) > 3 else torch.ones_like(y)
             if x.dim() == 5:  # pares de recortes: (B, 2, ...) -> (2B, ...)
-                x, y, m = x.flatten(0, 1), y.flatten(0, 1), m.flatten(0, 1)
+                x, y, m, w = x.flatten(0, 1), y.flatten(0, 1), m.flatten(0, 1), w.flatten(0, 1)
+            w = w.to(device)
             x = x.to(device, non_blocking=True)
             y, m = y.to(device), m.to(device)
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 logit, mapa = model(x)
-            loss_cls = F.binary_cross_entropy_with_logits(logit.float(), y)
+            loss_cls = F.binary_cross_entropy_with_logits(logit.float(), y, weight=w)
             loss = loss_cls
             if mapa is not None and a.seg_weight > 0:
                 loss = loss + a.seg_weight * F.binary_cross_entropy_with_logits(mapa.float(), m)
@@ -252,7 +281,8 @@ def main(a):
             torch.save({"state_dict": model.state_dict(), "config": config, "epoca": epoch, "val": mv}, out / "best.pt")
             flag = "  <- guardado"
         print(f"época {epoch}/{epochs}  loss {row['train_loss']:.4f}  val AUC {mv['auc']:.4f}  "
-              f"recall@fpr1% {mv['recall@fpr1%']:.3f}  AP {mv['ap']:.4f}  "
+              f"recall@fpr1% {mv['recall@fpr1%']:.3f}  "
+              + (f"ahorro Q{mv['ahorro']:,.0f}  " if "ahorro" in mv else "") + f"AP {mv['ap']:.4f}  "
               f"acc {mv['acc']:.3f}  ({row['min']} min, VRAM máx {torch.cuda.max_memory_allocated() / 2**30:.1f} GB){flag}",
               flush=True)
 
@@ -277,7 +307,9 @@ if __name__ == "__main__":
     p.add_argument("--crop", type=int, default=0, help="entrenar con recortes NxN a resolución completa")
     p.add_argument("--p-mask", type=float, default=0.75,
                    help="con --crop, fracción de recortes centrados en la zona editada (el resto, al azar)")
-    p.add_argument("--select", choices=["auc", "recall@fpr1%"], default="auc",
+    p.add_argument("--peso-monto", action="store_true",
+                   help="ponderar la pérdida de clasificación por el monto en riesgo de cada alteración")
+    p.add_argument("--select", choices=["auc", "recall@fpr1%", "ahorro"], default="auc",
                    help="métrica de validación para guardar best.pt")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch", type=int, default=8)
