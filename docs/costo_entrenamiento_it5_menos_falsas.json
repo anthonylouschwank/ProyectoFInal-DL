@@ -1,0 +1,28 @@
+{
+ "config": {
+  "backbone": "efficientnet_b0",
+  "head": "mapa",
+  "topk": 8,
+  "seg_weight": 1.0,
+  "size": [
+   768,
+   576
+  ],
+  "crop": 512,
+  "lr": 0.0003,
+  "native": true,
+  "max_side": 1600
+ },
+ "gpu": "NVIDIA GeForce RTX 3070 Laptop GPU",
+ "minutos": 40.6,
+ "vram_max_gb": 3.65,
+ "epocas": 10,
+ "n_train": 12000,
+ "n_val": 600,
+ "seleccion": "recall@fpr1%",
+ "mejor_val": [
+  0.9466666666666667,
+  0.9920888888888889
+ ],
+ "parametros_M": 4.09
+}
