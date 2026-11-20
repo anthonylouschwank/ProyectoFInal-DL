@@ -1,0 +1,7 @@
+{
+ "umbral": 0.88,
+ "fuente": "umbral elegido en validación (results/it5_menos_falsas_test/predicciones_val.csv)",
+ "prevalencia": 0.03,
+ "costo_revision_Q": 10.0,
+ "costo_friccion_Q": 20.0
+}

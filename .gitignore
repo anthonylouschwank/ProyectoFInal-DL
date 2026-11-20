@@ -5,7 +5,10 @@ __pycache__/
 .env
 # Datos sintéticos (se regeneran con src/build_dataset.py) y modelos (muy pesados para git)
 data/
-models/
+models/*
+# El modelo final (17 MB) sí va en git para poder usar la app con solo clonar
+!models/final/
 results/
 # Fotos reales: pueden tener datos personales
 eval/real/
+demo/reales/

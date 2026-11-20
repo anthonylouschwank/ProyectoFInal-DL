@@ -20,7 +20,7 @@ Foto ─► EfficientNet-B0 (resolución completa) ─► mapa de sospecha (1/16
 - **Entrenamiento:** recortes de 512×512 **a resolución completa**, tomando la misma ventana de la foto auténtica y de su gemela alterada. Así el modelo aprende la alteración y no el estilo de la factura. Al usarlo, recibe la foto completa (la red es totalmente convolucional). El modelo final (it5) suma un lote con más falsificaciones difíciles, y se elige por su recall con 1 % de falsas alarmas para no acusar a empleados honestos.
 - **Modelo de valor:** fraude detenido − costo de auditar las marcadas − fricción por acusar a empleados honestos, por cada 1,000 facturas. El umbral se elige maximizando ese valor, con análisis de sensibilidad.
 
-Resultados de las iteraciones: [RESULTADOS.md](RESULTADOS.md). Para seguir entrenando (configuración actual, qué se probó y qué intentar): [ITERACIONES.md](ITERACIONES.md).
+**Para presentar:** [PRESENTACION.md](PRESENTACION.md) (qué es, iteraciones y resultados) y [DEMO.md](DEMO.md) (instalación en Windows y guion de la demo, con ejemplos en `demo/`). Resultados de las iteraciones: [RESULTADOS.md](RESULTADOS.md). Para seguir entrenando (configuración actual, qué se probó y qué intentar): [ITERACIONES.md](ITERACIONES.md).
 
 ## Instalación
 
@@ -32,7 +32,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 ```
 
-El modelo entrenado (`models/final/`) no está en git por su tamaño; se comparte aparte o se reentrena (abajo).
+El modelo final (`models/final/`, 17 MB) está incluido en el repositorio: basta con clonar e instalar para usar la app. Los demás modelos y los datos se regeneran (abajo).
 
 ## Uso
 

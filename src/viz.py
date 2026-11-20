@@ -13,12 +13,16 @@ def overlay(img: Image.Image, heat: Image.Image, alpha: float = 0.55) -> Image.I
     return Image.fromarray(out.clip(0, 255).astype(np.uint8))
 
 
-def suspicious_box(heat: Image.Image, frac: float = 0.5):
-    """Caja alrededor de la zona más sospechosa (píxeles con >= frac del máximo)."""
+def suspicious_box(heat: Image.Image, frac: float = 0.6):
+    """Caja alrededor de la zona más sospechosa: la región conectada al punto máximo con
+    valores >= frac del máximo (así no se mezclan zonas tibias lejanas)."""
+    from scipy import ndimage
+
     h = np.asarray(heat, np.float32)
     if h.max() <= 0:
         return None
-    ys, xs = np.where(h >= frac * h.max())
+    labels, _ = ndimage.label(h >= frac * h.max())
+    ys, xs = np.where(labels == labels.flat[h.argmax()])
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 

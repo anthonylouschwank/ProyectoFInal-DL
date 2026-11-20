@@ -1,0 +1,128 @@
+{
+ "modelo": "it5_menos_falsas",
+ "conjunto": "test",
+ "n": 600,
+ "auc": 0.9805944444444443,
+ "ap": 0.9866211182763716,
+ "acc@0.5": 0.9516666666666667,
+ "recall@0.5": 0.9366666666666666,
+ "fpr@0.5": 0.03333333333333333,
+ "auc_ela": 0.5070333333333333,
+ "recall@fpr1%": 0.93,
+ "recall@fpr5%": 0.9466666666666667,
+ "recall_por_campo@0.5": {
+  "fecha": 0.889,
+  "item": 0.857,
+  "iva": 0.846,
+  "nit_emisor": 1.0,
+  "nit_receptor": 1.0,
+  "total": 0.941
+ },
+ "recall_por_metodo@0.5": {
+  "copiar_digito": 0.632,
+  "reescribir": 0.957
+ },
+ "recall_por_dificultad@0.5": {
+  "dificil": 0.797,
+  "facil": 0.986,
+  "medio": 0.948
+ },
+ "auc_por_dificultad": {
+  "dificil": 0.9195,
+  "facil": 0.9992,
+  "medio": 0.9899
+ },
+ "auc_por_formato": {
+  "carta": 0.9805079082200936,
+  "ticket": 0.9807051152167106
+ },
+ "localizacion_gradcam": 0.6166666666666667,
+ "localizacion_mapa": 0.8666666666666667,
+ "reglas_recall": 0.47333333333333333,
+ "reglas_fpr": 0.14,
+ "valor": {
+  "supuestos": {
+   "prevalencia": 0.03,
+   "costo_revision_Q": 10.0,
+   "costo_friccion_Q": 20.0
+  },
+  "fraude_total_sin_control_Q_1000": 10292.86,
+  "umbral_optimo": 0.88,
+  "umbral_elegido_en": "validacion",
+  "en_umbral_optimo": {
+   "umbral": 0.88,
+   "recall": 0.9167,
+   "fpr": 0.0067,
+   "facturas_auditadas_1000": 33.9667,
+   "fraude_detenido_Q": 9630.901,
+   "fraude_perdido_Q": 661.959,
+   "costo_auditoria_Q": 339.6667,
+   "costo_friccion_Q": 129.3333,
+   "valor_neto_Q_1000": 9161.901
+  },
+  "oraculo_prueba": {
+   "umbral": 0.8,
+   "valor_neto_Q_1000": 9297.9
+  },
+  "auditar_todo_Q_1000": -19107.14,
+  "reglas_Q_1000": -76.8109999999997
+ },
+ "sensibilidad": [
+  {
+   "escenario": "base",
+   "umbral_optimo": 0.88,
+   "valor_optimo_Q_1000": 9161.9,
+   "valor_con_umbral_base_Q_1000": 9161.9,
+   "auditar_todo_Q_1000": -19107.1
+  },
+  {
+   "escenario": "prevalencia 1%",
+   "umbral_optimo": 0.96,
+   "valor_optimo_Q_1000": 2991.4,
+   "valor_con_umbral_base_Q_1000": 2920.6,
+   "auditar_todo_Q_1000": -26369.0
+  },
+  {
+   "escenario": "prevalencia 5%",
+   "umbral_optimo": 0.46,
+   "valor_optimo_Q_1000": 14906.9,
+   "valor_con_umbral_base_Q_1000": 15403.2,
+   "auditar_todo_Q_1000": -11845.2
+  },
+  {
+   "escenario": "prevalencia 10%",
+   "umbral_optimo": 0.46,
+   "valor_optimo_Q_1000": 30813.8,
+   "valor_con_umbral_base_Q_1000": 31006.3,
+   "auditar_todo_Q_1000": 6309.5
+  },
+  {
+   "escenario": "costo revisión -50%",
+   "umbral_optimo": 0.88,
+   "valor_optimo_Q_1000": 9331.7,
+   "valor_con_umbral_base_Q_1000": 9331.7,
+   "auditar_todo_Q_1000": -14107.1
+  },
+  {
+   "escenario": "costo revisión +50%",
+   "umbral_optimo": 0.88,
+   "valor_optimo_Q_1000": 8992.1,
+   "valor_con_umbral_base_Q_1000": 8992.1,
+   "auditar_todo_Q_1000": -24107.1
+  },
+  {
+   "escenario": "fricción -50%",
+   "umbral_optimo": 0.46,
+   "valor_optimo_Q_1000": 8867.5,
+   "valor_con_umbral_base_Q_1000": 9226.6,
+   "auditar_todo_Q_1000": -9407.1
+  },
+  {
+   "escenario": "fricción +50%",
+   "umbral_optimo": 0.88,
+   "valor_optimo_Q_1000": 9097.2,
+   "valor_con_umbral_base_Q_1000": 9097.2,
+   "auditar_todo_Q_1000": -28807.1
+  }
+ ]
+}
